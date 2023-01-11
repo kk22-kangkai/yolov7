@@ -44,25 +44,25 @@ def train(hyp, opt, device, tb_writer=None):
         Path(opt.save_dir), opt.epochs, opt.batch_size, opt.total_batch_size, opt.weights, opt.global_rank, opt.freeze
 
     # Directories
-    wdir = save_dir / 'weights'
+    wdir = save_dir / 'weights' #训练权重的存储位置
     wdir.mkdir(parents=True, exist_ok=True)  # make dir
     last = wdir / 'last.pt'
     best = wdir / 'best.pt'
     results_file = save_dir / 'results.txt'
 
     # Save run settings
-    with open(save_dir / 'hyp.yaml', 'w') as f:
+    with open(save_dir / 'hyp.yaml', 'w') as f: #模型的运行参数保存
         yaml.dump(hyp, f, sort_keys=False)
     with open(save_dir / 'opt.yaml', 'w') as f:
         yaml.dump(vars(opt), f, sort_keys=False)
 
     # Configure
-    plots = not opt.evolve  # create plots
+    plots = not opt.evolve  # create plots #是否使用GPU训练
     cuda = device.type != 'cpu'
     init_seeds(2 + rank)
     with open(opt.data) as f:
         data_dict = yaml.load(f, Loader=yaml.SafeLoader)  # data dict
-    is_coco = opt.data.endswith('coco.yaml')
+    is_coco = opt.data.endswith('coco.yaml') #使用coco模型训练好的参数
 
     # Logging- Doing this before checking the dataset. Might update data_dict
     loggers = {'wandb': None}  # loggers dict
@@ -84,8 +84,8 @@ def train(hyp, opt, device, tb_writer=None):
     if pretrained:
         with torch_distributed_zero_first(rank):
             attempt_download(weights)  # download if not found locally
-        ckpt = torch.load(weights, map_location=device)  # load checkpoint
-        model = Model(opt.cfg or ckpt['model'].yaml, ch=3, nc=nc, anchors=hyp.get('anchors')).to(device)  # create
+        ckpt = torch.load(weights, map_location=device)  # 加载预训练模型
+        model = Model(opt.cfg or ckpt['model'].yaml, ch=3, nc=nc, anchors=hyp.get('anchors')).to(device)  # 创建网络模型
         exclude = ['anchor'] if (opt.cfg or hyp.get('anchors')) and not opt.resume else []  # exclude keys
         state_dict = ckpt['model'].float().state_dict()  # to FP32
         state_dict = intersect_dicts(state_dict, model.state_dict(), exclude=exclude)  # intersect
@@ -98,7 +98,7 @@ def train(hyp, opt, device, tb_writer=None):
     train_path = data_dict['train']
     test_path = data_dict['val']
 
-    # Freeze
+    # Freeze #冷冻层，不参与梯度更新
     freeze = [f'model.{x}.' for x in (freeze if len(freeze) > 1 else range(freeze[0]))]  # parameter names to freeze (full or partial)
     for k, v in model.named_parameters():
         v.requires_grad = True  # train all layers
@@ -106,13 +106,13 @@ def train(hyp, opt, device, tb_writer=None):
             print('freezing %s' % k)
             v.requires_grad = False
 
-    # Optimizer
-    nbs = 64  # nominal batch size
-    accumulate = max(round(nbs / total_batch_size), 1)  # accumulate loss before optimizing
+    # Optimizer 优化
+    nbs = 64  # nominal batch size 正常的batch的大小
+    accumulate = max(round(nbs / total_batch_size), 1)  # 累加梯度下降
     hyp['weight_decay'] *= total_batch_size * accumulate / nbs  # scale weight_decay
     logger.info(f"Scaled weight_decay = {hyp['weight_decay']}")
 
-    pg0, pg1, pg2 = [], [], []  # optimizer parameter groups
+    pg0, pg1, pg2 = [], [], []  # 学习率衰减策略
     for k, v in model.named_modules():
         if hasattr(v, 'bias') and isinstance(v.bias, nn.Parameter):
             pg2.append(v.bias)  # biases
@@ -190,17 +190,17 @@ def train(hyp, opt, device, tb_writer=None):
     # Scheduler https://arxiv.org/pdf/1812.01187.pdf
     # https://pytorch.org/docs/stable/_modules/torch/optim/lr_scheduler.html#OneCycleLR
     if opt.linear_lr:
-        lf = lambda x: (1 - x / (epochs - 1)) * (1.0 - hyp['lrf']) + hyp['lrf']  # linear
+        lf = lambda x: (1 - x / (epochs - 1)) * (1.0 - hyp['lrf']) + hyp['lrf']  # 学习率线性衰减
     else:
-        lf = one_cycle(1, hyp['lrf'], epochs)  # cosine 1->hyp['lrf']
+        lf = one_cycle(1, hyp['lrf'], epochs)  # cosine 1->hyp['lrf'] 学习率非线性衰减
     scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lf)
     # plot_lr_scheduler(optimizer, scheduler, epochs)
 
     # EMA
-    ema = ModelEMA(model) if rank in [-1, 0] else None
+    ema = ModelEMA(model) if rank in [-1, 0] else None  #ema机制
 
     # Resume
-    start_epoch, best_fitness = 0, 0.0
+    start_epoch, best_fitness = 0, 0.0#断点训练，加载多少次后继续训练
     if pretrained:
         # Optimizer
         if ckpt['optimizer'] is not None:
@@ -270,7 +270,7 @@ def train(hyp, opt, device, tb_writer=None):
             # Anchors
             if not opt.noautoanchor:
                 check_anchors(dataset, model=model, thr=hyp['anchor_t'], imgsz=imgsz)
-            model.half().float()  # pre-reduce anchor precision
+            model.half().float()  # pre-reduce anchor precision 单双精度混合训练
 
     # DDP mode
     if cuda and rank != -1:
@@ -526,9 +526,9 @@ def train(hyp, opt, device, tb_writer=None):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--weights', type=str, default='yolo7.pt', help='initial weights path')
+    parser.add_argument('--weights', type=str, default='yolo7.pt', help='initial weights path')#使用已经训练好的权重
     parser.add_argument('--cfg', type=str, default='', help='model.yaml path')
-    parser.add_argument('--data', type=str, default='data/coco.yaml', help='data.yaml path')
+    parser.add_argument('--data', type=str, default='data/coco.yaml', help='data.yaml path')#数据集的位置
     parser.add_argument('--hyp', type=str, default='data/hyp.scratch.p5.yaml', help='hyperparameters path')
     parser.add_argument('--epochs', type=int, default=300)
     parser.add_argument('--batch-size', type=int, default=16, help='total batch size for all GPUs')
